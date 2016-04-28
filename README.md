@@ -1,2 +1,2 @@
 # PracticalMachineLearning-
-Practical Machine Learning, Coursera
+Practical Machine Learning, Coursera Course Project
