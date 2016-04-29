@@ -11,7 +11,7 @@
 
 <meta name="author" content="Aleksandr Smetanin" />
 
-<meta name="date" content="2016-04-25" />
+<meta name="date" content="2016-04-30" />
 
 <title>Prediction Assignment Writeup</title>
 
@@ -112,7 +112,7 @@ $(document).ready(function () {
 <h1 class="title">Prediction Assignment Writeup</h1>
 <h3 class="subtitle"><em>Practical Machine Learning Course Project</em></h3>
 <h4 class="author"><em>Aleksandr Smetanin</em></h4>
-<h4 class="date"><em>25 April 2016</em></h4>
+<h4 class="date"><em>30 April 2016</em></h4>
 
 </div>
 
@@ -129,24 +129,27 @@ $(document).ready(function () {
 <div id="loading-data" class="section level3">
 <h3>Loading data</h3>
 <p>The data is supplied in two separate data set. We read training data into <em>df</em> data frame and testing data into <em>mainTest</em> data frame.</p>
-<p>The test set will be used only for prediction purpose. There are only 20 cases to predict Class. The training set will be used for all other activities. It has 19622 observations. Outcome variable is <em>classe</em> that is factor with 5 levels.</p>
-<pre class="r"><code>table(df$classe)</code></pre>
+<pre class="r"><code># read data
+df &lt;- read.csv(&quot;pml-training.csv&quot;)
+mainTest &lt;- read.csv(&quot;pml-testing.csv&quot;)
+table(df$classe)</code></pre>
 <pre><code>## 
 ##    A    B    C    D    E 
 ## 5580 3797 3422 3216 3607</code></pre>
+<p>The test set will be used only for prediction purpose. There are only 20 cases to predict Class. The training set will be used for all other activities. It has 19622 observations. Outcome variable is <em>classe</em> that is factor with 5 levels.</p>
 </div>
 <div id="data-preparation" class="section level3">
 <h3>Data preparation</h3>
 <p>We perform some data preparation steps prior to building our model [2, 3].</p>
 <p>We split the <em>df</em> set into <em>training2</em> and <em>testing2</em> sets. This <em>testing2</em> set will be used to evaluate performance of a model. We use <em>createDataPartition</em> function to create stratified random splits. In this case, 75% of data goes to the new training set and 25% - to the new testing one.</p>
-<pre><code>## Warning: package 'caret' was built under R version 3.2.4</code></pre>
-<pre><code>## Warning: package 'ggplot2' was built under R version 3.2.5</code></pre>
-<pre><code>## Warning: package 'doParallel' was built under R version 3.2.5</code></pre>
 <pre><code>## Loading required package: foreach</code></pre>
-<pre><code>## Warning: package 'foreach' was built under R version 3.2.3</code></pre>
 <pre><code>## Loading required package: iterators</code></pre>
-<pre><code>## Warning: package 'iterators' was built under R version 3.2.3</code></pre>
-<p>There are 14718 and 4904 observations of 160 variables in the splits.</p>
+<pre class="r"><code># make training and testing sets
+set.seed(1516)
+inTrain &lt;- createDataPartition(y = df$classe, p = 0.75, list = FALSE)
+training2 &lt;- df[inTrain,]
+testing2 &lt;- df[-inTrain,]</code></pre>
+<p>There are 14718 and 4904 observations of 160 variables in the splits, accordingly.</p>
 </div>
 <div id="dimension-reduction" class="section level3">
 <h3>Dimension Reduction</h3>
@@ -162,9 +165,8 @@ table(summary(training2)[7,])</code></pre>
 ## (Other)         :8249           NA's   :14415   
 ##                       1                      43</code></pre>
 <pre class="r"><code>columnsNA &lt;- which(grepl(&quot;NA's&quot;, summary(training2)[7,]))
-(NAs &lt;- sum(is.na(training2[columnsNA[1]])))</code></pre>
-<pre><code>## [1] 14415</code></pre>
-<pre class="r"><code>training2 &lt;- training2[,-columnsNA]
+NAs &lt;- sum(is.na(training2[columnsNA[1]]))
+training2 &lt;- training2[,-columnsNA]
 
 # move non-numeric features to the end to to drop correlated features correctly
 numVars &lt;- sapply(1:ncol(training2), FUN=function(x) {is.numeric(training2[,x])})
@@ -181,25 +183,148 @@ training2 &lt;- training2[,-highCorr]
 training2 &lt;- select(training2, -X)
 dim(training2)</code></pre>
 <pre><code>## [1] 14718    53</code></pre>
-<p>Number of predictors with missing values is 43. Each of those predictors have 14415 empty values or 98% of total observations. We drop this variables as they have too little details for our purpose.</p>
-<p>Number of predictors dropped because of near zero-variance is 58 and by the reason of high correlation is 5. The reduction steps could shrink the dimension from 159 to 52 features.</p>
+<p>There are 43 predictors with missing values. Each of those predictors have 14415 empty values or 98% of total observations. We drop this variables as they have too little details for our purpose.</p>
+<p>Number of predictors dropped because of near zero-variance is 58 and because of high correlation is 5. The reduction steps could shrink the dimension from 159 to 52 features.</p>
 </div>
 </div>
-<div id="model-building" class="section level2">
-<h2>Model building</h2>
+<div id="classification-model" class="section level2">
+<h2>Classification model</h2>
+<div id="model-building" class="section level3">
+<h3>Model building</h3>
 <p>The <em>train</em> function of <em>caret</em> package can be used to build a model and select its tuning parameters. We choose random forest classification model as widespread and suitable for many applications. There is the only tuning parameter <em>mtry</em> which is number of randomly selected predictors as candidates at each split.</p>
 <p>Random forest is a default method for <em>train</em> function. We change two default parameters of the function: <em>tuneLength</em> and resampling method. The first element controls the size of the default grid of tuning parameters. It has 3 as a default value. We set it to 5 to make function research more complexity parameters as candidate values. Default resampling method is bootstrapping. We choose k-fold cross-validation as it works faster and allows to obtain good accuracy. It is necessary to use <em>trControl</em> parameter that is a list of control parameters for the <em>train</em> function. The function <em>trainControl</em> can be used to set <em>method</em> parameter as <em>cv</em> for k-fold cross-validation. The default number of folds is 10, number of repeats is 1. These values are good in our case and we left them unchanged.</p>
-<p>Also we use multiprocessing capabilities of the modern processors to reduce training time. <strong>Parallel</strong> and <strong>doParallel</strong> packages are available to start working with multiple cores. There are some steps to perform: make and register computational cluster, tell <strong>caret</strong> to use this cluster by <em>allowParallel</em> parameter of <em>trainControl</em> function, fit the model, de-register parallel processing cluster [4].</p>
+<p>Also we use multiprocessing capabilities of the modern processors to reduce training time. <em>Parallel</em> and <em>doParallel</em> packages are available to start working with multiple cores. There are some steps to perform: make and register computational cluster, tell <em>caret</em> to use this cluster by <em>allowParallel</em> parameter of <em>trainControl</em> function, fit the model, de-register parallel processing cluster [4].</p>
 <pre class="r"><code># train random forest model
 cluster &lt;- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 registerDoParallel(cluster)
 fitControl &lt;- trainControl(allowParallel = TRUE, method = &quot;cv&quot;)
-fitRF &lt;- train(classe ~ ., data=training2, trControl = fitControl, tuneLength = 5)
-stopCluster(cluster)</code></pre>
+fitRF &lt;- train(classe ~ ., data=training2, trControl = fitControl, tuneLength = 5)</code></pre>
+<pre><code>## Loading required package: randomForest</code></pre>
+<pre><code>## randomForest 4.6-12</code></pre>
+<pre><code>## Type rfNews() to see new features/changes/bug fixes.</code></pre>
+<pre><code>## 
+## Attaching package: 'randomForest'</code></pre>
+<pre><code>## The following object is masked from 'package:dplyr':
+## 
+##     combine</code></pre>
+<pre><code>## The following object is masked from 'package:ggplot2':
+## 
+##     margin</code></pre>
+<pre class="r"><code>stopCluster(cluster)
+fitRF</code></pre>
+<pre><code>## Random Forest 
+## 
+## 14718 samples
+##    52 predictor
+##     5 classes: 'A', 'B', 'C', 'D', 'E' 
+## 
+## No pre-processing
+## Resampling: Cross-Validated (10 fold) 
+## Summary of sample sizes: 13247, 13247, 13245, 13247, 13247, 13245, ... 
+## Resampling results across tuning parameters:
+## 
+##   mtry  Accuracy   Kappa    
+##    2    0.9872955  0.9839257
+##   20    0.9995923  0.9994844
+##   38    0.9996602  0.9995703
+##   56    0.9993884  0.9992265
+##   74    0.9991845  0.9989686
+## 
+## Accuracy was used to select the optimal model using  the largest value.
+## The final value used for the model was mtry = 38.</code></pre>
+<p>Each row in the table corresponds to a tuning parameter <em>mtry</em>, average <em>accuracy</em> and <em>Kappa</em> of the 10-fold cross-validation samples. The optimal model is selected as a candidate model with the highest accuracy 99.966. In the output below, final model parameter <em>mtry</em> is 38, estimated error rate is 0.05%.</p>
+<pre class="r"><code>fitRF$finalModel</code></pre>
+<pre><code>## 
+## Call:
+##  randomForest(x = x, y = y, mtry = param$mtry) 
+##                Type of random forest: classification
+##                      Number of trees: 500
+## No. of variables tried at each split: 38
+## 
+##         OOB estimate of  error rate: 0.05%
+## Confusion matrix:
+##      A    B    C    D    E  class.error
+## A 4183    1    0    0    1 0.0004778973
+## B    1 2847    0    0    0 0.0003511236
+## C    0    1 2566    0    0 0.0003895598
+## D    0    0    1 2410    1 0.0008291874
+## E    0    0    0    2 2704 0.0007390983</code></pre>
+<p>We can see which predictors have largest impact on the model.</p>
+<pre class="r"><code>varImp(fitRF)</code></pre>
+<pre><code>## rf variable importance
+## 
+##   only 20 most important variables shown (out of 74)
+## 
+##                                Overall
+## raw_timestamp_part_1           100.000
+## num_window                      40.733
+## pitch_forearm                   27.284
+## magnet_dumbbell_z               18.005
+## magnet_belt_y                   17.780
+## yaw_belt                        17.587
+## pitch_belt                      15.210
+## magnet_dumbbell_y               12.257
+## cvtd_timestamp02/12/2011 13:33   9.462
+## cvtd_timestamp30/11/2011 17:12   8.963
+## magnet_dumbbell_x                7.646
+## roll_dumbbell                    6.876
+## total_accel_belt                 6.793
+## roll_forearm                     6.740
+## cvtd_timestamp05/12/2011 11:24   6.380
+## cvtd_timestamp02/12/2011 14:58   6.281
+## cvtd_timestamp28/11/2011 14:15   5.516
+## magnet_belt_z                    5.506
+## gyros_belt_z                     5.307
+## accel_dumbbell_y                 4.953</code></pre>
 </div>
-<div id="conclusion" class="section level2">
-<h2>Conclusion</h2>
-<p>Model training time with <strong>parallel</strong> is 1306.57 seconds and 4000 seconds without multiprocessors.</p>
+<div id="model-performance" class="section level3">
+<h3>Model performance</h3>
+<p>Function <em>confusionMatrix</em> is used to describe the performance of classification model. We execute it to calculate a cross-tabulation of real and predicted values of <em>classe</em> variable with associated statistics on the <em>testing2</em> data set.</p>
+<pre class="r"><code>(cm &lt;- confusionMatrix(predict(fitRF, newdata = testing2), testing2$classe))</code></pre>
+<pre><code>## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction    A    B    C    D    E
+##          A 1395    1    0    0    0
+##          B    0  947    2    0    0
+##          C    0    1  853    1    0
+##          D    0    0    0  802    0
+##          E    0    0    0    1  901
+## 
+## Overall Statistics
+##                                           
+##                Accuracy : 0.9988          
+##                  95% CI : (0.9973, 0.9996)
+##     No Information Rate : 0.2845          
+##     P-Value [Acc &gt; NIR] : &lt; 2.2e-16       
+##                                           
+##                   Kappa : 0.9985          
+##  Mcnemar's Test P-Value : NA              
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity            1.0000   0.9979   0.9977   0.9975   1.0000
+## Specificity            0.9997   0.9995   0.9995   1.0000   0.9998
+## Pos Pred Value         0.9993   0.9979   0.9977   1.0000   0.9989
+## Neg Pred Value         1.0000   0.9995   0.9995   0.9995   1.0000
+## Prevalence             0.2845   0.1935   0.1743   0.1639   0.1837
+## Detection Rate         0.2845   0.1931   0.1739   0.1635   0.1837
+## Detection Prevalence   0.2847   0.1935   0.1743   0.1635   0.1839
+## Balanced Accuracy      0.9999   0.9987   0.9986   0.9988   0.9999</code></pre>
+<p>The accuracy is , and error rate is . The accuracy is very good, although these values are worth than were estimated above.</p>
+</div>
+<div id="prediction-of-new-class" class="section level3">
+<h3>Prediction of new Class</h3>
+<p>The goal of the work is to predict Class of movements registered by IMUs. New unindentified Class data are in the data set <em>mainTest</em> that was mentioned in the very beginning. The set contains 4904 observations recorded by IMUs. We apply the <em>fitRF</em> model to make a decision how well those exercises were performed. Either they match to best Class A or some mistakes drop them into imperfect Classes B,C,D,E.</p>
+<pre class="r"><code>(pred &lt;- predict(fitRF, newdata = mainTest))</code></pre>
+<pre><code>##  [1] B A B A A E D B A A B C B A E E A B B B
+## Levels: A B C D E</code></pre>
+<pre class="r"><code>table(pred)</code></pre>
+<pre><code>## pred
+## A B C D E 
+## 7 8 1 1 3</code></pre>
+</div>
 </div>
 <div id="references" class="section level2">
 <h2>References</h2>

@@ -2,15 +2,14 @@
 title: "Prediction Assignment Writeup"
 author: "Aleksandr Smetanin"
 subtitle: Practical Machine Learning Course Project
-date: '25 April 2016'
+date: '30 April 2016'
 output: html_document
 ---
 
 ## Introduction
 This work is dedicated to qualitative activity recognition. While many articles are concerned with recognising *which* activity is performed, this research is concerned with recognising *how well* it is performed.
 
-Six participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway
-(Class D) and throwing the hips to the front (Class E). Class A corresponds to the correct execution of the exercise, while the other 4 classes correspond to common mistakes. The data was recorded by four 9 degrees of freedom Razor inertial measurement units (IMU), which provide three-axes acceleration, gyroscope and magnetometer data at a joint sampling rate of 45 Hz. The sensors was mounted in the sportsmens' glove, armband, lumbar belt and dumbbell [1].
+Six participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Class A corresponds to the correct execution of the exercise, while the other 4 classes correspond to common mistakes. The data was recorded by four 9 degrees of freedom Razor inertial measurement units (IMU), which provide three-axes acceleration, gyroscope and magnetometer data at a joint sampling rate of 45 Hz. The sensors was mounted in the sportsmens' glove, armband, lumbar belt and dumbbell [1].
 
 The goal of the work is to predict Class of movements registered by IMUs.
 
@@ -22,7 +21,7 @@ The data for this project come from this source: http://groupware.les.inf.puc-ri
 
 The data is supplied in two separate data set. We read training data into *df* data frame and testing data into *mainTest* data frame.
 
-```{r load, echo=FALSE, cache=F}
+```{r load, echo=FALSE}
 setwd("~/Coursera/08 Practical Machine Learning/Course project")
 # check are there train and test files and download them if necessary
 urlTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
@@ -31,19 +30,15 @@ fileTrain <- "pml-training.csv"
 fileTest <- "pml-testing.csv"
 if (!file.exists(fileTrain)) download.file(urlTrain, destfile = fileTrain)
 if (!file.exists(fileTest)) download.file(urlTest, destfile = fileTest)
-
-# read data
-df <- read.csv(fileTrain)
-mainTest <- read.csv(fileTest)
 ```
-
-The test set will be used only for prediction purpose. There are only `r nrow(mainTest)` cases to predict Class. The training set will be used for all other activities. It has `r nrow(df)` observations. Outcome variable is *classe* that is factor with 5 levels.
 
 ```{r}
+# read data
+df <- read.csv("pml-training.csv")
+mainTest <- read.csv("pml-testing.csv")
 table(df$classe)
 ```
-
-
+The test set will be used only for prediction purpose. There are only `r nrow(mainTest)` cases to predict Class. The training set will be used for all other activities. It has `r nrow(df)` observations. Outcome variable is *classe* that is factor with 5 levels.
 
 ### Data preparation
 
@@ -51,16 +46,19 @@ We perform some data preparation steps prior to building our model [2, 3].
 
 We split the *df* set into *training2* and *testing2* sets. This *testing2* set will be used to evaluate performance of a model. We use *createDataPartition* function to create stratified random splits. In this case, 75% of data goes to the new training set and 25% - to the new testing one.
 
-```{r, echo=F, cache=F}
+```{r, echo=F}
 #load libraries
-library(caret, verbose = FALSE, warn.conflicts = FALSE, quietly = T)
+library(iterators, warn.conflicts = FALSE)
+library(foreach, warn.conflicts = FALSE)
+library(caret, verbose = FALSE, warn.conflicts = FALSE, quietly = TRUE)
 library(dplyr, warn.conflicts = FALSE, verbose = FALSE)
 # load parallel libraries
 library(parallel, warn.conflicts = FALSE, verbose = FALSE)
 library(doParallel, warn.conflicts = FALSE, verbose = FALSE)
-
-set.seed(1516)
+```
+```{r}
 # make training and testing sets
+set.seed(1516)
 inTrain <- createDataPartition(y = df$classe, p = 0.75, list = FALSE)
 training2 <- df[inTrain,]
 testing2 <- df[-inTrain,]
@@ -102,29 +100,64 @@ dim(training2)
 
 There are `r length(columnsNA)` predictors with missing values. Each of those predictors have `r NAs` empty values or `r round(NAs/nrow(training2), 2)*100`% of total observations. We drop this variables as they have too little details for our purpose.
 
-Number of predictors dropped because of near zero-variance is `r length(nzv)` and by the reason of high correlation is `r length(highCorr)`. The reduction steps could shrink the dimension from `r ncol(testing2)-1` to `r ncol(training2)-1` features.
+Number of predictors dropped because of near zero-variance is `r length(nzv)` and because of high correlation is `r length(highCorr)`. The reduction steps could shrink the dimension from `r ncol(testing2)-1` to `r ncol(training2)-1` features.
 
-## Model building
+## Classification model
+
+### Model building
 
 The *train* function of *caret* package can be used to build a model and select its tuning parameters. We choose random forest classification model as widespread and suitable for many applications. There is the only tuning parameter *mtry* which is number of randomly selected predictors as candidates at each split. 
 
 Random forest is a default method for *train* function. We change two default parameters of the function: *tuneLength* and resampling method. The first element controls the size of the default grid of tuning parameters. It has 3 as a default value. We set it to 5 to make function research more complexity parameters as candidate values. Default resampling method is bootstrapping. We choose k-fold cross-validation as it works faster and allows to obtain good accuracy. It is necessary to use *trControl* parameter that is a list of control parameters for the *train* function. The function *trainControl* can be used to set *method* parameter as *cv* for k-fold cross-validation. The default number of folds is 10, number of repeats is 1. These values are good in our case and we left them unchanged.
 
-Also we use multiprocessing capabilities of the modern processors to reduce training time. **Parallel** and **doParallel** packages are available to start working with multiple cores. There are some steps to perform: make and register computational cluster, tell **caret** to use this cluster by *allowParallel* parameter of *trainControl* function, fit the model, de-register parallel processing cluster [4].
+Also we use multiprocessing capabilities of the modern processors to reduce training time. *Parallel* and *doParallel* packages are available to start working with multiple cores. There are some steps to perform: make and register computational cluster, tell *caret* to use this cluster by *allowParallel* parameter of *trainControl* function, fit the model, de-register parallel processing cluster [4].
 
-```{r fitRF, cache = TRUE, eval = F}
+```{r fitRF, cache = TRUE}
 # train random forest model
 cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 registerDoParallel(cluster)
 fitControl <- trainControl(allowParallel = TRUE, method = "cv")
 fitRF <- train(classe ~ ., data=training2, trControl = fitControl, tuneLength = 5)
 stopCluster(cluster)
+fitRF
+```
+```{r, echo = FALSE}
+m <- fitRF$bestTune$mtry
+p <- round(filter(fitRF$results, mtry == m)$Accuracy*100, 3)
+```
+
+Each row in the table corresponds to a tuning parameter *mtry*, average *accuracy* and *Kappa* of the 10-fold cross-validation samples. The optimal model is selected as a candidate model with the highest accuracy `r p`. In the output below, final model parameter *mtry* is `r m`, estimated error rate is 0.05%.
+
+```{r}
+fitRF$finalModel
+```
+
+We can see which predictors have largest impact on the model. 
+
+```{r}
+varImp(fitRF)
 ```
 
 
-## Conclusion
+### Model performance
 
-Model training time with **parallel** is 1306.57 seconds and 4000 seconds without multiprocessors.
+Function *confusionMatrix* is used to describe the performance of classification model. We execute it to calculate a cross-tabulation of real and predicted values of *classe* variable with associated statistics on the *testing2* data set.
+
+```{r}
+(cm <- confusionMatrix(predict(fitRF, newdata = testing2), testing2$classe))
+```
+
+The accuracy is `r round(cm$Overall[1]*100)`, and error rate is `r 1 - round(cm$Overall[1]*100)`. The accuracy is very good, although these values are worth than were estimated above.
+
+### Prediction of new Class
+
+The goal of the work is to predict Class of movements registered by IMUs. New unindentified Class data  are in the data set *mainTest* that was mentioned in the very beginning. The set contains `r nrow(testing2)` observations recorded by IMUs. We apply the *fitRF* model to make a decision how well those exercises were performed. Either they match to best Class A or some mistakes drop them into imperfect Classes B,C,D,E.
+
+```{r}
+(pred <- predict(fitRF, newdata = mainTest))
+table(pred)
+```
+
 
 ## References
 
