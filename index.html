@@ -124,18 +124,12 @@ $(document).ready(function () {
 <p>The goal of the work is to predict Class of movements registered by IMUs.</p>
 <p>The data for this project come from this source: <a href="http://groupware.les.inf.puc-rio.br/har" class="uri">http://groupware.les.inf.puc-rio.br/har</a>. Two data sets were provided: one for <a href="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv">training</a> and one for <a href="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv">test</a> purposes.</p>
 </div>
-<div id="data-rocessing" class="section level2">
-<h2>Data rocessing</h2>
+<div id="data-processing" class="section level2">
+<h2>Data processing</h2>
 <div id="loading-data" class="section level3">
 <h3>Loading data</h3>
 <p>The data is supplied in two separate data set. We read training data into <em>df</em> data frame and testing data into <em>mainTest</em> data frame.</p>
-<p>The test set will be used only for prediction purpose. There are only 20 cases to predict Class.</p>
-<pre class="r"><code>dim(mainTest)</code></pre>
-<pre><code>## [1]  20 160</code></pre>
-<p>The training set will be used for all other activities.</p>
-<pre class="r"><code>dim(df)</code></pre>
-<pre><code>## [1] 19622   160</code></pre>
-<p>There are as many as 19622 observations. Outcome variable is <em>classe</em> that is factor with 5 levels.</p>
+<p>The test set will be used only for prediction purpose. There are only 20 cases to predict Class. The training set will be used for all other activities. It has 19622 observations. Outcome variable is <em>classe</em> that is factor with 5 levels.</p>
 <pre class="r"><code>table(df$classe)</code></pre>
 <pre><code>## 
 ##    A    B    C    D    E 
@@ -152,16 +146,18 @@ $(document).ready(function () {
 <pre><code>## Warning: package 'foreach' was built under R version 3.2.3</code></pre>
 <pre><code>## Loading required package: iterators</code></pre>
 <pre><code>## Warning: package 'iterators' was built under R version 3.2.3</code></pre>
-<pre><code>## [1] 14718   160</code></pre>
-<pre><code>## [1] 4904  160</code></pre>
 <p>There are 14718 and 4904 observations of 160 variables in the splits.</p>
 </div>
 <div id="dimension-reduction" class="section level3">
 <h3>Dimension Reduction</h3>
-<p>We use <em>nearZeroVar</em> function to remove so-called “near zero-variance predictors” those can not explain the variation in target variable and can cause problems during resampling for some model types.</p>
-<pre><code>## [1] 14718   102</code></pre>
-<p>We eliminate 58 predictors from the data. Also we look are there any missing values?</p>
-<pre class="r"><code>table(summary(training2)[7,])</code></pre>
+<p>The data has one outcome variable <em>classe</em> and 159 predictors. Suppose we faced a problem of high dimension. We must perform some techiques and methods to find important variables which have significant effect on outcome and suitable for model building.</p>
+<p>First we use <em>nearZeroVar</em> function to remove so-called “near zero-variance predictors” those can not explain the variation in target variable and can cause problems during resampling for some model types. Secondly we look through the data for missing values and remove features with greater than 40% of not available observations. Then remaining predictors are undergo to multicollinearity test. High correlation can lower down the performance of model. We remove variables with correlation greater than 0.9. Also we drop <em>X</em> variable as it is just a row number.</p>
+<pre class="r"><code># remove near zero variance predictors
+nzv &lt;- nearZeroVar(training2)
+training2 &lt;- training2[,-nzv]
+
+# remove NA's features
+table(summary(training2)[7,])</code></pre>
 <pre><code>## 
 ## (Other)         :8249           NA's   :14415   
 ##                       1                      43</code></pre>
@@ -169,28 +165,48 @@ $(document).ready(function () {
 (NAs &lt;- sum(is.na(training2[columnsNA[1]])))</code></pre>
 <pre><code>## [1] 14415</code></pre>
 <pre class="r"><code>training2 &lt;- training2[,-columnsNA]
-dim(training2)</code></pre>
-<pre><code>## [1] 14718    59</code></pre>
-<p>Number of predictors with missing values is 43. Each of those predictors have 14415 empty values or 98% of total observations. We drop this variables as they have too little details for our purpose.</p>
-<p>We check the remaining predictors for multicollinearity. High correlation can lower down the performance of model. We remove variables with correlation greater than 0.9.</p>
-<pre><code>## [1] 14718    54</code></pre>
-<p>At first non-numeric predictors moved to the end of data to drop features correctly. We use <em>findCorrelation</em> function to detect and eliminate 5 highly correlated variables.</p>
-<p>Also we drop <em>X</em> variables as it is just a row number.</p>
-<pre class="r"><code># remove X feature as it is row number
+
+# move non-numeric features to the end to to drop correlated features correctly
+numVars &lt;- sapply(1:ncol(training2), FUN=function(x) {is.numeric(training2[,x])})
+otherVars &lt;- which(!numVars)
+numVars &lt;- which(numVars)
+training2 &lt;- select(training2, c(numVars, otherVars))
+
+# remove highly correlated features
+corrMatrix &lt;- cor(training2[1:length(numVars)])
+highCorr &lt;- findCorrelation(corrMatrix, 0.9)
+training2 &lt;- training2[,-highCorr]
+
+# remove X feature as it is row number
 training2 &lt;- select(training2, -X)
 dim(training2)</code></pre>
 <pre><code>## [1] 14718    53</code></pre>
-<p>Dimension reduction steps allow to have only 53 variables instead of initial number of 160.</p>
+<p>Number of predictors with missing values is 43. Each of those predictors have 14415 empty values or 98% of total observations. We drop this variables as they have too little details for our purpose.</p>
+<p>Number of predictors dropped because of near zero-variance is 58 and by the reason of high correlation is 5. The reduction steps could shrink the dimension from 159 to 52 features.</p>
 </div>
 </div>
 <div id="model-building" class="section level2">
 <h2>Model building</h2>
+<p>The <em>train</em> function of <em>caret</em> package can be used to build a model and select its tuning parameters. We choose random forest classification model as widespread and suitable for many applications. There is the only tuning parameter <em>mtry</em> which is number of randomly selected predictors as candidates at each split.</p>
+<p>Random forest is a default method for <em>train</em> function. We change two default parameters of the function: <em>tuneLength</em> and resampling method. The first element controls the size of the default grid of tuning parameters. It has 3 as a default value. We set it to 5 to make function research more complexity parameters as candidate values. Default resampling method is bootstrapping. We choose k-fold cross-validation as it works faster and allows to obtain good accuracy. It is necessary to use <em>trControl</em> parameter that is a list of control parameters for the <em>train</em> function. The function <em>trainControl</em> can be used to set <em>method</em> parameter as <em>cv</em> for k-fold cross-validation. The default number of folds is 10, number of repeats is 1. These values are good in our case and we left them unchanged.</p>
+<p>Also we use multiprocessing capabilities of the modern processors to reduce training time. <strong>Parallel</strong> and <strong>doParallel</strong> packages are available to start working with multiple cores. There are some steps to perform: make and register computational cluster, tell <strong>caret</strong> to use this cluster by <em>allowParallel</em> parameter of <em>trainControl</em> function, fit the model, de-register parallel processing cluster [4].</p>
+<pre class="r"><code># train random forest model
+cluster &lt;- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl &lt;- trainControl(allowParallel = TRUE, method = &quot;cv&quot;)
+fitRF &lt;- train(classe ~ ., data=training2, trControl = fitControl, tuneLength = 5)
+stopCluster(cluster)</code></pre>
+</div>
+<div id="conclusion" class="section level2">
+<h2>Conclusion</h2>
+<p>Model training time with <strong>parallel</strong> is 1306.57 seconds and 4000 seconds without multiprocessors.</p>
 </div>
 <div id="references" class="section level2">
 <h2>References</h2>
 <p>[1] Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human ’13) . Stuttgart, Germany: ACM SIGCHI, 2013. URL <a href="http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf" class="uri">http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf</a></p>
 <p>[2] Kuhn, Max. Building Predictive Models in R Using the caret Package. Journal of Statistical Software. November 2008, Volume 28, Issue 5. URL <a href="https://www.jstatsoft.org/index.php/jss/article/view/v028i05/v28i05.pdf" class="uri">https://www.jstatsoft.org/index.php/jss/article/view/v028i05/v28i05.pdf</a></p>
 <p>[3] SUNIL RAY. Beginners Guide To Learn Dimension Reduction Techniques. JULY 28, 2015. URL <a href="http://www.analyticsvidhya.com/blog/2015/07/dimension-reduction-methods/" class="uri">http://www.analyticsvidhya.com/blog/2015/07/dimension-reduction-methods/</a></p>
+<p>[4] Greski, Len. Improving Performance of Random Forest in caret::train(). URL <a href="https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md" class="uri">https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md</a></p>
 </div>
 
 

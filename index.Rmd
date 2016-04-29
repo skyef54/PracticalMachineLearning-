@@ -16,7 +16,7 @@ The goal of the work is to predict Class of movements registered by IMUs.
 
 The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. Two data sets were provided: one for [training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and one for [test](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) purposes.
 
-## Data rocessing
+## Data processing
 
 ### Loading data
 
@@ -37,18 +37,7 @@ df <- read.csv(fileTrain)
 mainTest <- read.csv(fileTest)
 ```
 
-The test set will be used only for prediction purpose. There are only 20 cases to predict Class.
-
-```{r}
-dim(mainTest)
-```
-
-The training set will be used for all other activities.
-```{r}
-dim(df)
-```
-
-There are as many as `r dim(df)[1]` observations. Outcome variable is *classe* that is factor with 5 levels.
+The test set will be used only for prediction purpose. There are only `r nrow(mainTest)` cases to predict Class. The training set will be used for all other activities. It has `r nrow(df)` observations. Outcome variable is *classe* that is factor with 5 levels.
 
 ```{r}
 table(df$classe)
@@ -66,6 +55,7 @@ We split the *df* set into *training2* and *testing2* sets. This *testing2* set 
 #load libraries
 library(caret, verbose = FALSE, warn.conflicts = FALSE, quietly = T)
 library(dplyr, warn.conflicts = FALSE, verbose = FALSE)
+# load parallel libraries
 library(parallel, warn.conflicts = FALSE, verbose = FALSE)
 library(doParallel, warn.conflicts = FALSE, verbose = FALSE)
 
@@ -74,39 +64,27 @@ set.seed(1516)
 inTrain <- createDataPartition(y = df$classe, p = 0.75, list = FALSE)
 training2 <- df[inTrain,]
 testing2 <- df[-inTrain,]
-dim(training2)
-dim(testing2)
 ```
 
-There are `r dim(training2)[1]` and `r dim(testing2)[1]` observations of `r dim(training2)[2]` variables in the splits.
+There are `r nrow(training2)` and `r nrow(testing2)` observations of `r ncol(training2)` variables in the splits, accordingly.
 
 ### Dimension Reduction
+The data has one outcome variable *classe* and `r ncol(training2)-1` predictors. Suppose we faced a problem of high dimension. We must perform some techiques and methods to find important variables which have significant effect on outcome and suitable for model building.
 
-We use *nearZeroVar* function to remove so-called "near zero-variance predictors" those can not explain the variation in target variable and can cause problems during resampling for some model types.
+First we use *nearZeroVar* function to remove so-called "near zero-variance predictors" those can not explain the variation in target variable and can cause problems during resampling for some model types. Secondly we look through the data for missing values and remove features with greater than 40% of not available observations. Then remaining predictors are undergo to multicollinearity test. High correlation can lower down the performance of model. We remove variables with correlation greater than 0.9. Also we drop *X* variable as it is just a row number. 
 
-```{r, echo=F, cache=F}
+```{r reduce dimension}
 # remove near zero variance predictors
 nzv <- nearZeroVar(training2)
 training2 <- training2[,-nzv]
-dim(training2)
-```
 
-We eliminate `r length(nzv)` predictors from the data. Also we look are there any missing values?
-
-```{r}
+# remove NA's features
 table(summary(training2)[7,])
 columnsNA <- which(grepl("NA's", summary(training2)[7,]))
-(NAs <- sum(is.na(training2[columnsNA[1]])))
+NAs <- sum(is.na(training2[columnsNA[1]]))
 training2 <- training2[,-columnsNA]
-dim(training2)
-```
 
-Number of predictors with missing values is `r length(columnsNA)`. Each of those predictors have `r NAs` empty values or `r round(NAs/nrow(training2), 2)*100`% of total observations. We drop this variables as they have too little details for our purpose.
-
-We check the remaining predictors for multicollinearity. High correlation can lower down the performance of model. We remove variables with correlation greater than 0.9.
-
-```{r, echo=F, }
-# move non-numeric features to the end
+# move non-numeric features to the end to to drop correlated features correctly
 numVars <- sapply(1:ncol(training2), FUN=function(x) {is.numeric(training2[,x])})
 otherVars <- which(!numVars)
 numVars <- which(numVars)
@@ -116,21 +94,37 @@ training2 <- select(training2, c(numVars, otherVars))
 corrMatrix <- cor(training2[1:length(numVars)])
 highCorr <- findCorrelation(corrMatrix, 0.9)
 training2 <- training2[,-highCorr]
-dim(training2)
-```
 
-At first non-numeric predictors moved to the end of data to drop features correctly. We use *findCorrelation* function to detect and eliminate `r length(highCorr)` highly correlated variables.
-
-Also we drop *X* variables as it is just a row number.
-```{r}
 # remove X feature as it is row number
 training2 <- select(training2, -X)
 dim(training2)
 ```
 
-Dimension reduction steps allow to have only `r ncol(training2)` variables instead of initial number of `r ncol(df)`.
+There are `r length(columnsNA)` predictors with missing values. Each of those predictors have `r NAs` empty values or `r round(NAs/nrow(training2), 2)*100`% of total observations. We drop this variables as they have too little details for our purpose.
+
+Number of predictors dropped because of near zero-variance is `r length(nzv)` and by the reason of high correlation is `r length(highCorr)`. The reduction steps could shrink the dimension from `r ncol(testing2)-1` to `r ncol(training2)-1` features.
 
 ## Model building
+
+The *train* function of *caret* package can be used to build a model and select its tuning parameters. We choose random forest classification model as widespread and suitable for many applications. There is the only tuning parameter *mtry* which is number of randomly selected predictors as candidates at each split. 
+
+Random forest is a default method for *train* function. We change two default parameters of the function: *tuneLength* and resampling method. The first element controls the size of the default grid of tuning parameters. It has 3 as a default value. We set it to 5 to make function research more complexity parameters as candidate values. Default resampling method is bootstrapping. We choose k-fold cross-validation as it works faster and allows to obtain good accuracy. It is necessary to use *trControl* parameter that is a list of control parameters for the *train* function. The function *trainControl* can be used to set *method* parameter as *cv* for k-fold cross-validation. The default number of folds is 10, number of repeats is 1. These values are good in our case and we left them unchanged.
+
+Also we use multiprocessing capabilities of the modern processors to reduce training time. **Parallel** and **doParallel** packages are available to start working with multiple cores. There are some steps to perform: make and register computational cluster, tell **caret** to use this cluster by *allowParallel* parameter of *trainControl* function, fit the model, de-register parallel processing cluster [4].
+
+```{r fitRF, cache = TRUE, eval = F}
+# train random forest model
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl <- trainControl(allowParallel = TRUE, method = "cv")
+fitRF <- train(classe ~ ., data=training2, trControl = fitControl, tuneLength = 5)
+stopCluster(cluster)
+```
+
+
+## Conclusion
+
+Model training time with **parallel** is 1306.57 seconds and 4000 seconds without multiprocessors.
 
 ## References
 
@@ -140,4 +134,4 @@ Dimension reduction steps allow to have only `r ncol(training2)` variables inste
 
 [3] SUNIL RAY. Beginners Guide To Learn Dimension Reduction Techniques. JULY 28, 2015. URL http://www.analyticsvidhya.com/blog/2015/07/dimension-reduction-methods/
 
-
+[4] Greski, Len. Improving Performance of Random Forest in caret::train(). URL https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
