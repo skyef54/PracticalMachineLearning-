@@ -11,7 +11,7 @@ This work is dedicated to qualitative activity recognition. While many articles 
 
 Six participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Class A corresponds to the correct execution of the exercise, while the other 4 classes correspond to common mistakes. The data was recorded by four 9 degrees of freedom Razor inertial measurement units (IMU), which provide three-axes acceleration, gyroscope and magnetometer data at a joint sampling rate of 45 Hz. The sensors was mounted in the sportsmens' glove, armband, lumbar belt and dumbbell [1].
 
-The goal of the work is to predict Class of movements registered by IMUs.
+The goal of the work is to predict Class of exercises registered by IMUs.
 
 The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. Two data sets were provided: one for [training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and one for [test](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) purposes.
 
@@ -21,7 +21,7 @@ The data for this project come from this source: http://groupware.les.inf.puc-ri
 
 The data is supplied in two separate data set. We read training data into *df* data frame and testing data into *mainTest* data frame.
 
-```{r load, echo=FALSE}
+```{r download, echo=FALSE}
 setwd("~/Coursera/08 Practical Machine Learning/Course project")
 # check are there train and test files and download them if necessary
 urlTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
@@ -32,7 +32,7 @@ if (!file.exists(fileTrain)) download.file(urlTrain, destfile = fileTrain)
 if (!file.exists(fileTest)) download.file(urlTest, destfile = fileTest)
 ```
 
-```{r}
+```{r read}
 # read data
 df <- read.csv("pml-training.csv")
 mainTest <- read.csv("pml-testing.csv")
@@ -40,23 +40,45 @@ table(df$classe)
 ```
 The test set will be used only for prediction purpose. There are only `r nrow(mainTest)` cases to predict Class. The training set will be used for all other activities. It has `r nrow(df)` observations. Outcome variable is *classe* that is factor with 5 levels.
 
+```{r plot1, echo=FALSE, fig.align='center'}
+plot(pitch_forearm ~ X, data = df, col = classe)
+legend("bottomright", pch = 20, col=which(unique(df$classe) %in% LETTERS), legend = unique(df$classe))
+title("Figure 1. Pitch_forearm vs X, df data set")
+```
+Variable *X* is a row number. A plot of any variable against *X* shows nice classification: first rows belongs to Class A, next rows goes to Class B, etc. For example, fugire 1 shows dependence of *pitch_forearm* against row number. This variable *X* looks like very strong predictor which indeed will cause many classification errors if someone just rearranges our data. Obviuosly, row number can not be treated as a predictor.
+```{r plot2, echo=FALSE, fig.align='center', fig.width=8, fig.height=8}
+par(mar=c(2, 2, 2, 2))
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor = 0.3, ...) {
+     usr <- par("usr"); on.exit(par(usr))
+     par(usr = c(0, 1, 0, 1))
+     r <- abs(cor(x, y))
+     txt <- format(c(r, 0.123456789), digits = digits)[1]
+     txt <- paste0(prefix, txt)
+     if(missing(cex.cor)) cex.cor <- 0.3/strwidth(txt)
+     text(0.5, 0.5, txt, cex = cex.cor, col = "blue")
+}
+pairs(~ accel_belt_z + roll_belt + pitch_forearm + max_roll_arm, data = df, 
+      lower.panel = panel.cor,
+      main = "Figure 2. Paired plots and correlations of 4 variables")
+```
+The graphic view of relations between some variables is shown on figure 2. The scatterplots hold pairwise correlations and pairwise plots. Some predictors are highly correlated, like *accel_belt_z* and *roll_belt*. Some features have missing values, like *max_roll_arm*, and correlation cann't be calculated. Right column of plots confirms that, there are much less points than on the other squares.
+
 ### Data preparation
 
 We perform some data preparation steps prior to building our model [2, 3].
 
 We split the *df* set into *training2* and *testing2* sets. This *testing2* set will be used to evaluate performance of a model. We use *createDataPartition* function to create stratified random splits. In this case, 75% of data goes to the new training set and 25% - to the new testing one.
 
-```{r, echo=F}
+```{r libraries, echo=FALSE}
 #load libraries
-library(iterators, warn.conflicts = FALSE)
-library(foreach, warn.conflicts = FALSE)
-library(caret, verbose = FALSE, warn.conflicts = FALSE, quietly = TRUE)
-library(dplyr, warn.conflicts = FALSE, verbose = FALSE)
+suppressWarnings(suppressMessages(library(caret)))
+suppressWarnings(suppressMessages(library(randomForest)))
+suppressWarnings(suppressMessages(library(dplyr)))
 # load parallel libraries
-library(parallel, warn.conflicts = FALSE, verbose = FALSE)
-library(doParallel, warn.conflicts = FALSE, verbose = FALSE)
+suppressWarnings(suppressMessages(library(parallel)))
+suppressWarnings(suppressMessages(library(doParallel)))
 ```
-```{r}
+```{r split ds}
 # make training and testing sets
 set.seed(1516)
 inTrain <- createDataPartition(y = df$classe, p = 0.75, list = FALSE)
@@ -67,7 +89,7 @@ testing2 <- df[-inTrain,]
 There are `r nrow(training2)` and `r nrow(testing2)` observations of `r ncol(training2)` variables in the splits, accordingly.
 
 ### Dimension Reduction
-The data has one outcome variable *classe* and `r ncol(training2)-1` predictors. Suppose we faced a problem of high dimension. We must perform some techiques and methods to find important variables which have significant effect on outcome and suitable for model building.
+The data has one outcome variable *classe* and `r ncol(training2)-1` predictors. Suppose we faced a problem of high dimension. We must perform some techiques and methods to find important variables which have significant effect on outcome and are suitable for model building.
 
 First we use *nearZeroVar* function to remove so-called "near zero-variance predictors" those can not explain the variation in target variable and can cause problems during resampling for some model types. Secondly we look through the data for missing values and remove features with greater than 40% of not available observations. Then remaining predictors are undergo to multicollinearity test. High correlation can lower down the performance of model. We remove variables with correlation greater than 0.9. Also we drop *X* variable as it is just a row number. 
 
@@ -98,15 +120,15 @@ training2 <- select(training2, -X)
 dim(training2)
 ```
 
-There are `r length(columnsNA)` predictors with missing values. Each of those predictors have `r NAs` empty values or `r round(NAs/nrow(training2), 2)*100`% of total observations. We drop this variables as they have too little details for our purpose.
+There were `r length(columnsNA)` predictors with missing values. Each of those predictors had `r NAs` empty values or `r round(NAs/nrow(training2), 2)*100`% of total observations. We dropped this variables as they had too little details for our purpose.
 
-Number of predictors dropped because of near zero-variance is `r length(nzv)` and because of high correlation is `r length(highCorr)`. The reduction steps could shrink the dimension from `r ncol(testing2)-1` to `r ncol(training2)-1` features.
+Number of predictors dropped because of near zero-variance is `r length(nzv)` and because of high correlation is `r length(highCorr)`. The reduction steps altogether could shrink the dimension from `r ncol(testing2)-1` to `r ncol(training2)-1` features.
 
 ## Classification model
 
 ### Model building
 
-The *train* function of *caret* package can be used to build a model and select its tuning parameters. We choose random forest classification model as widespread and suitable for many applications. There is the only tuning parameter *mtry* which is number of randomly selected predictors as candidates at each split. 
+The *train* function of *caret* package is used to build a model and select its tuning parameters. We choose random forest classification model as widespread and suitable for many applications. There is the only tuning parameter *mtry* which is number of randomly selected predictors as candidates at each split. 
 
 Random forest is a default method for *train* function. We change two default parameters of the function: *tuneLength* and resampling method. The first element controls the size of the default grid of tuning parameters. It has 3 as a default value. We set it to 5 to make function research more complexity parameters as candidate values. Default resampling method is bootstrapping. We choose k-fold cross-validation as it works faster and allows to obtain good accuracy. It is necessary to use *trControl* parameter that is a list of control parameters for the *train* function. The function *trainControl* can be used to set *method* parameter as *cv* for k-fold cross-validation. The default number of folds is 10, number of repeats is 1. These values are good in our case and we left them unchanged.
 
@@ -117,43 +139,45 @@ Also we use multiprocessing capabilities of the modern processors to reduce trai
 cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 registerDoParallel(cluster)
 fitControl <- trainControl(allowParallel = TRUE, method = "cv")
-fitRF <- train(classe ~ ., data=training2, trControl = fitControl, tuneLength = 5)
+suppressWarnings(suppressMessages(
+    fitRF <- train(classe ~ ., data=training2, trControl = fitControl, tuneLength = 5)
+))
 stopCluster(cluster)
 fitRF
 ```
 ```{r, echo = FALSE}
 m <- fitRF$bestTune$mtry
-p <- round(filter(fitRF$results, mtry == m)$Accuracy*100, 3)
+p <- round(filter(fitRF$results, mtry == m)$Accuracy*100, 2)
 ```
 
-Each row in the table corresponds to a tuning parameter *mtry*, average *accuracy* and *Kappa* of the 10-fold cross-validation samples. The optimal model is selected as a candidate model with the highest accuracy `r p`. In the output below, final model parameter *mtry* is `r m`, estimated error rate is 0.05%.
+Each row in the table above corresponds to a tuning parameter *mtry*, average *accuracy* and *Kappa* of the 10-fold cross-validation samples. The optimal model is selected as a candidate model with the highest accuracy `r p`%. In the output below, final model parameter *mtry* is `r m`, estimated error rate is 0.05%.
 
-```{r}
+```{r final model}
 fitRF$finalModel
 ```
 
 We can see which predictors have largest impact on the model. 
 
-```{r}
+```{r importance}
 varImp(fitRF)
 ```
 
 
 ### Model performance
 
-Function *confusionMatrix* is used to describe the performance of classification model. We execute it to calculate a cross-tabulation of real and predicted values of *classe* variable with associated statistics on the *testing2* data set.
+Function *confusionMatrix* is used to describe the performance of classification model on the *testing2* data set. We execute it to calculate a cross-tabulation of real and predicted values of *classe* variable with associated statistics.
 
-```{r}
+```{r model perf}
 (cm <- confusionMatrix(predict(fitRF, newdata = testing2), testing2$classe))
 ```
 
-The accuracy is `r round(cm$Overall[1]*100)`, and error rate is `r 1 - round(cm$Overall[1]*100)`. The accuracy is very good, although these values are worth than were estimated above.
+The accuracy is `r round(cm$overall[1], 4)*100`%, and error rate is `r (1 - round(cm$overall[1], 4))*100`%. The accuracy is very good, although these values are worse than were estimated above.
 
 ### Prediction of new Class
 
-The goal of the work is to predict Class of movements registered by IMUs. New unindentified Class data  are in the data set *mainTest* that was mentioned in the very beginning. The set contains `r nrow(testing2)` observations recorded by IMUs. We apply the *fitRF* model to make a decision how well those exercises were performed. Either they match to best Class A or some mistakes drop them into imperfect Classes B,C,D,E.
+The goal of the work is to predict Class of exercises registered by IMUs. New unindentified Class data  are in the data set *mainTest* that was mentioned in the very beginning. The set contains `r nrow(mainTest)` observations. We apply the *fitRF* model to make a decision how well those exercises were performed. Either they match to best Class A or some mistakes drop them into imperfect Classes B,C,D,E.
 
-```{r}
+```{r predict}
 (pred <- predict(fitRF, newdata = mainTest))
 table(pred)
 ```
@@ -165,6 +189,6 @@ table(pred)
 
 [2] Kuhn, Max. Building Predictive Models in R Using the caret Package. Journal of Statistical Software. November 2008, Volume 28, Issue 5. URL https://www.jstatsoft.org/index.php/jss/article/view/v028i05/v28i05.pdf
 
-[3] SUNIL RAY. Beginners Guide To Learn Dimension Reduction Techniques. JULY 28, 2015. URL http://www.analyticsvidhya.com/blog/2015/07/dimension-reduction-methods/
+[3] Sunil, Ray. Beginners Guide To Learn Dimension Reduction Techniques. JULY 28, 2015. URL http://www.analyticsvidhya.com/blog/2015/07/dimension-reduction-methods/
 
 [4] Greski, Len. Improving Performance of Random Forest in caret::train(). URL https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
